@@ -1,0 +1,17 @@
+name = "gj-guangjun-worker"
+main = "src/worker/index.ts"
+compatibility_date = "2026-05-20"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gj-guangjun"
+database_id = "replace-with-d1-database-id"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "gj-guangjun-assets"
+
+[assets]
+directory = "dist"
+not_found_handling = "single-page-application"
