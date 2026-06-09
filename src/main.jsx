@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  ArrowLeft,
   ArrowRight,
   CheckCircle2,
   CirclePlay,
@@ -18,33 +19,92 @@ import './styles.css';
 
 const navKeys = ['home', 'about', 'products', 'news', 'contact'];
 
-function pageFromHash() {
-  const page = window.location.hash.replace('#/', '').replace('#', '');
-  return navKeys.includes(page) ? page : 'home';
+function routeFromHash() {
+  const parts = window.location.hash.replace('#/', '').replace('#', '').split('/').filter(Boolean);
+  const [page, detailId] = parts;
+
+  if (page === 'news' && detailId) {
+    return { page: 'newsDetail', detailId };
+  }
+
+  return { page: navKeys.includes(page) ? page : 'home', detailId: null };
+}
+
+function slugifyNewsTitle(title) {
+  return title
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function getNewsItemId(item) {
+  const imageId = item.image?.split('/').pop()?.replace(/\.[^.]+$/, '');
+  return item.id || imageId || slugifyNewsTitle(item.title);
 }
 
 function App() {
   const [lang, setLang] = useState('en');
-  const [activePage, setActivePage] = useState(pageFromHash);
+  const [route, setRoute] = useState(routeFromHash);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [topbarTransparent, setTopbarTransparent] = useState(() => routeFromHash().page === 'home');
   const t = content[lang];
   const year = useMemo(() => new Date().getFullYear(), []);
+  const activePage = route.page;
 
   useEffect(() => {
-    const syncPage = () => setActivePage(pageFromHash());
-    window.addEventListener('hashchange', syncPage);
-    return () => window.removeEventListener('hashchange', syncPage);
+    const syncRoute = () => setRoute(routeFromHash());
+    window.addEventListener('hashchange', syncRoute);
+    return () => window.removeEventListener('hashchange', syncRoute);
   }, []);
 
+  useEffect(() => {
+    const syncTopbar = () => {
+      if (activePage !== 'home') {
+        setTopbarTransparent(false);
+        return;
+      }
+
+      const hero = document.querySelector('.hero');
+      const topbarHeight = document.querySelector('.topbar')?.offsetHeight ?? 88;
+      setTopbarTransparent(Boolean(hero && hero.getBoundingClientRect().bottom > topbarHeight));
+    };
+
+    syncTopbar();
+    window.addEventListener('scroll', syncTopbar, { passive: true });
+    window.addEventListener('resize', syncTopbar);
+    return () => {
+      window.removeEventListener('scroll', syncTopbar);
+      window.removeEventListener('resize', syncTopbar);
+    };
+  }, [activePage]);
+
   const goToPage = (page) => {
-    setActivePage(page);
+    const nextRoute = { page, detailId: null };
+    setRoute(nextRoute);
     setMenuOpen(false);
     window.history.pushState(null, '', `#/${page}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const goToNewsDetail = (item) => {
+    const detailId = getNewsItemId(item);
+    setRoute({ page: 'newsDetail', detailId });
+    setMenuOpen(false);
+    window.history.pushState(null, '', `#/news/${detailId}`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const shellClassName = [
+    'site-shell',
+    activePage === 'home' ? 'is-home' : '',
+    topbarTransparent ? 'is-topbar-transparent' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div className="site-shell">
+    <div className={shellClassName}>
       <header className="topbar">
         <button className="brand brand-button" onClick={() => goToPage('home')} aria-label={lang === 'en' ? t.brandName : t.brandCn}>
           <img src="/images/logo.png" alt="" />
@@ -55,7 +115,7 @@ function App() {
         <nav className={menuOpen ? 'main-nav is-open' : 'main-nav'} aria-label="Primary">
           {navKeys.map((key) => (
             <button
-              className={activePage === key ? 'active' : ''}
+              className={activePage === key || (key === 'news' && activePage === 'newsDetail') ? 'active' : ''}
               key={key}
               onClick={() => goToPage(key)}
               type="button"
@@ -86,10 +146,13 @@ function App() {
 
       <main>
         <div className="page-transition" key={`${activePage}-${lang}`}>
-          {activePage === 'home' && <HomePage t={t} goToPage={goToPage} />}
+          {activePage === 'home' && <HomePage t={t} goToPage={goToPage} goToNewsDetail={goToNewsDetail} />}
           {activePage === 'about' && <AboutPage t={t} />}
           {activePage === 'products' && <ProductsPage t={t} goToPage={goToPage} />}
-          {activePage === 'news' && <NewsPage t={t} goToPage={goToPage} />}
+          {activePage === 'news' && <NewsPage t={t} goToNewsDetail={goToNewsDetail} />}
+          {activePage === 'newsDetail' && (
+            <NewsDetailPage t={t} detailId={route.detailId} goToPage={goToPage} goToNewsDetail={goToNewsDetail} />
+          )}
           {activePage === 'contact' && <ContactPage t={t} />}
         </div>
       </main>
@@ -114,7 +177,7 @@ function App() {
   );
 }
 
-function HomePage({ t, goToPage }) {
+function HomePage({ t, goToPage, goToNewsDetail }) {
   return (
     <>
       <section className="hero">
@@ -144,31 +207,124 @@ function HomePage({ t, goToPage }) {
       <AboutVideoSection t={t} compact />
       <ProductsSection t={t} goToPage={goToPage} compact />
       <SolutionsBand t={t} />
-      <NewsSection t={t} goToPage={goToPage} compact />
+      <NewsSection t={t} goToNewsDetail={goToNewsDetail} compact />
       <HomeContactTeaser t={t} goToPage={goToPage} />
     </>
   );
 }
 
 function AboutPage({ t }) {
+  const [activeReport, setActiveReport] = useState(null);
+
+  useEffect(() => {
+    if (!activeReport) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setActiveReport(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeReport]);
+
   return (
     <>
-      <AboutVideoSection t={t} />
-      <section className="content-band">
-        <div className="section-heading">
-          <h2>{t.aboutPage.capabilityTitle}</h2>
-          <p>{t.aboutPage.capabilityBody}</p>
+      <section className="about-hero-redesign">
+        <div className="about-hero-media" aria-label={t.about.videoLabel}>
+          <img src="/images/about-factory.jpg" alt={t.about.videoAlt} />
+          <button className="play-button" aria-label={t.about.button} type="button">
+            <CirclePlay size={68} />
+          </button>
+          <div className="about-video-caption">
+            <span>{t.aboutPage.videoTag}</span>
+            <strong>2:18</strong>
+          </div>
         </div>
-        <div className="feature-grid">
-          {t.aboutPage.features.map((item) => (
-            <article className="feature-card" key={item.title}>
-              <ShieldCheck size={24} />
-              <h3>{item.title}</h3>
-              <p>{item.body}</p>
+        <div className="about-hero-copy">
+          <p className="section-label">{t.about.label}</p>
+          <h1>{t.aboutPage.title}</h1>
+          <p>{t.aboutPage.body}</p>
+          <div className="about-proof-grid">
+            {t.aboutPage.proof.map((item) => (
+              <span key={item}>
+                <CheckCircle2 size={17} />
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="equipment-section">
+        <div className="section-heading">
+          <h2>{t.aboutPage.equipmentTitle}</h2>
+          <p>{t.aboutPage.equipmentBody}</p>
+        </div>
+        <div className="equipment-layout">
+          {t.aboutPage.equipment.map((item, index) => (
+            <article className={index === 0 ? 'equipment-card featured' : 'equipment-card'} key={item.title}>
+              <img src={item.image} alt={item.title} />
+              <div>
+                <span>{item.tag}</span>
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </div>
             </article>
           ))}
         </div>
       </section>
+
+      <section className="report-section">
+        <div className="section-heading">
+          <h2>{t.aboutPage.reportTitle}</h2>
+          <p>{t.aboutPage.reportBody}</p>
+        </div>
+        <div className="report-grid">
+          {t.aboutPage.reports.map((item) => (
+            <article className="report-card" key={item.title}>
+              <button className="report-preview-button" onClick={() => setActiveReport(item)} type="button">
+                <img className="report-cover" src={item.image} alt={item.title} />
+              </button>
+              <div className="report-content">
+                <p>{item.type}</p>
+                <h3>{item.title}</h3>
+                <dl>
+                  {item.meta.map((row) => (
+                    <div key={row.name}>
+                      <dt>{row.name}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <a className="report-link" href={item.link} target="_blank" rel="noreferrer">
+                  {t.aboutPage.reportLinkText}
+                  <ArrowRight size={16} />
+                </a>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+      {activeReport && (
+        <div className="report-lightbox" role="dialog" aria-modal="true" aria-label={activeReport.title}>
+          <button className="report-lightbox-backdrop" onClick={() => setActiveReport(null)} type="button" aria-label="Close preview" />
+          <div className="report-lightbox-panel">
+            <div className="report-lightbox-header">
+              <h3>{activeReport.title}</h3>
+              <button onClick={() => setActiveReport(null)} type="button" aria-label="Close preview">
+                <X size={22} />
+              </button>
+            </div>
+            <img src={activeReport.image} alt={activeReport.title} />
+            <a className="report-lightbox-link" href={activeReport.link} target="_blank" rel="noreferrer">
+              {t.aboutPage.reportLinkText}
+              <ArrowRight size={16} />
+            </a>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -182,11 +338,85 @@ function ProductsPage({ t, goToPage }) {
   );
 }
 
-function NewsPage({ t, goToPage }) {
+function NewsPage({ t, goToNewsDetail }) {
   return (
     <>
-      <NewsSection t={t} goToPage={goToPage} />
+      <NewsSection t={t} goToNewsDetail={goToNewsDetail} />
     </>
+  );
+}
+
+function NewsDetailPage({ t, detailId, goToPage, goToNewsDetail }) {
+  const newsItems = t.news.items.map((item) => ({ ...item, id: getNewsItemId(item) }));
+  const article = newsItems.find((item) => item.id === detailId) || newsItems[0];
+  const relatedItems = newsItems.filter((item) => item.id !== article.id).slice(0, 3);
+  const detail = article.detail || {};
+  const paragraphs =
+    detail.paragraphs ||
+    [
+      article.summary,
+      t.newsDetail.fallbackParagraph,
+      t.newsDetail.fallbackClosing,
+    ];
+
+  return (
+    <article className="news-detail-page">
+      <section className="news-detail-hero">
+        <button className="news-back-button" onClick={() => goToPage('news')} type="button">
+          <ArrowLeft size={17} />
+          {t.newsDetail.back}
+        </button>
+        <div className="news-detail-meta">
+          {article.category && <span>{article.category}</span>}
+          <time>{article.date}</time>
+        </div>
+        <h1>{article.title}</h1>
+        <p>{article.summary}</p>
+      </section>
+
+      <section className="news-detail-layout">
+        <div className="news-detail-main">
+          <img className="news-detail-cover" src={article.image} alt="" />
+          <div className="news-detail-content">
+            {paragraphs.map((paragraph) => (
+              <p key={paragraph}>{paragraph}</p>
+            ))}
+          </div>
+          {detail.highlights && (
+            <div className="news-detail-highlight-grid">
+              {detail.highlights.map((item) => (
+                <div key={item.title}>
+                  <strong>{item.title}</strong>
+                  <span>{item.body}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <aside className="news-detail-sidebar" aria-label={t.newsDetail.sidebarTitle}>
+          <div className="news-sidebar-panel">
+            <span>{t.newsDetail.sidebarKicker}</span>
+            <h2>{t.newsDetail.sidebarTitle}</h2>
+            <p>{t.newsDetail.sidebarBody}</p>
+            <button className="button button-primary" onClick={() => goToPage('contact')} type="button">
+              {t.newsDetail.contactCta}
+              <ArrowRight size={18} />
+            </button>
+          </div>
+          <div className="news-sidebar-panel related-news-panel">
+            <h2>{t.newsDetail.relatedTitle}</h2>
+            {relatedItems.map((item) => (
+              <button key={item.id} onClick={() => goToNewsDetail(item)} type="button">
+                <span>{item.category}</span>
+                <strong>{item.title}</strong>
+                <time>{item.date}</time>
+              </button>
+            ))}
+          </div>
+        </aside>
+      </section>
+    </article>
   );
 }
 
@@ -315,23 +545,58 @@ function SolutionsBand({ t }) {
   );
 }
 
-function NewsSection({ t, goToPage, compact = false }) {
+function NewsSection({ t, goToNewsDetail, compact = false }) {
   const items = compact ? t.news.items.slice(0, 3) : t.news.items;
+  const featuredNews = items[0];
+  const moreNews = compact ? items : items.slice(1);
 
   return (
-    <section className="news-section">
+    <section className={compact ? 'news-section' : 'news-section news-page-section'}>
       <div className="section-heading">
         <h2>{t.news.title}</h2>
         <p>{t.news.subtitle}</p>
       </div>
+
+      {!compact && featuredNews && (
+        <article className="news-feature">
+          <div className="news-feature-image">
+            <img src={featuredNews.image} alt="" />
+          </div>
+          <div className="news-feature-copy">
+            <span>{t.news.featureLabel}</span>
+            <time>{featuredNews.date}</time>
+            <h3>{featuredNews.title}</h3>
+            <p>{featuredNews.summary}</p>
+            <button onClick={() => goToNewsDetail(featuredNews)} type="button" aria-label={`${t.news.readMore} ${featuredNews.title}`}>
+              {t.news.readMore}
+              <ArrowRight size={17} />
+            </button>
+          </div>
+        </article>
+      )}
+
+      {!compact && t.news.categories && (
+        <div className="news-category-grid">
+          {t.news.categories.map((category) => (
+            <article className="news-category-card" key={category.title}>
+              <span>{category.kicker}</span>
+              <h3>{category.title}</h3>
+              <p>{category.body}</p>
+            </article>
+          ))}
+        </div>
+      )}
+
       <div className="news-grid">
-        {items.map((item) => (
+        {moreNews.map((item) => (
           <article className="news-card" key={item.title}>
             <img src={item.image} alt="" />
             <div>
+              {!compact && item.category && <span className="news-card-tag">{item.category}</span>}
               <time>{item.date}</time>
               <h3>{item.title}</h3>
-              <button onClick={() => goToPage('contact')} type="button" aria-label={`${t.news.readMore} ${item.title}`}>
+              {!compact && item.summary && <p>{item.summary}</p>}
+              <button onClick={() => goToNewsDetail(item)} type="button" aria-label={`${t.news.readMore} ${item.title}`}>
                 {t.news.readMore}
                 <ArrowRight size={17} />
               </button>
